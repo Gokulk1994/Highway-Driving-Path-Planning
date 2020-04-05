@@ -58,7 +58,8 @@ Major files that are frequently used in this project are
 Newly added functions in main.cpp and their descriptions are described here. The same was added to
 the implementation in the main.cpp file for better understanding.
 
-Fig.1 High Level Architecture Diagram of main.cpp
+![picture alt](/images/hld.png "Fig.1 High Level Architecture Diagram of main.cpp")
+
 
 #### CheckTransition :
 
@@ -124,10 +125,8 @@ calculate the velocity of ego vehicle in Keep Lane state.
 
 The complete algorithm of the implementation is shown in the below flow chart in Fig.
 
+![picture alt](/images/flowchart.png "Fig.2 Implementation Algorithm flow chart")
 
-```
-Fig.2 Implementation Algorithm flow chart
-```
 ## Results :
 
 - The vehicle is able to achieve all the basic goals.
@@ -136,16 +135,12 @@ Fig.2 Implementation Algorithm flow chart
 - The car does not experience acceleration or jerk above the specified level.
 - No collisions with other vehicles
 
+![picture alt](/images/turnright.png "Fig.3 Lane change Right")
 
-Fig.3 Lane change Right
+![picture alt](/images/turnleft.png "Fig. 4 Lane change Left")
 
-```
-Fig. 4 Lane change Left
-```
+![picture alt](/images/reachedtarget.png "Fig.5 Total Distance Travelled and Target Velocity")
 
-```
-Fig.5 Total Distance Travelled and Target Velocity
-```
 ## Future Woks:
 
 - Instead of developing a cost-based algorithm, Behavioral Cloning based path planning same
