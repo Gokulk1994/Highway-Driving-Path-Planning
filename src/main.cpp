@@ -18,14 +18,16 @@ using std::vector;
 using std::map;
 
 
+
 json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> previous_path_x,vector<double> previous_path_y, double refVelocity ,
                        double ref_x, double ref_y, double ref_yaw)
 {
-  tk::spline s;          
-  s.set_points(ptsx,ptsy);         
+  tk::spline s;                 
   vector<double> next_x_vals;
   vector<double> next_y_vals;  
   json msgJson;
+  
+  s.set_points(ptsx,ptsy);  
   
 
   for(int i=0; i<previous_path_x.size(); i++)
@@ -48,7 +50,7 @@ json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> 
     double N = dist / ((0.02 * refVelocity) / 2.24); 
     double x_point = x_add_on + (target_x / N);
     double y_point = s(x_point);
-
+	
     x_add_on = x_point;
 
     double x_ref = x_point;
@@ -63,13 +65,124 @@ json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> 
     next_x_vals.push_back(x_point);
     next_y_vals.push_back(y_point); 
   }
-  
+    
   msgJson["next_x"] = next_x_vals;
   msgJson["next_y"] = next_y_vals;
   
   return msgJson;
 }
 
+
+double GetLaneCost(json msg, double lane,double ref_yaw, vector<double> map_waypoints_x,vector<double> map_waypoints_y)
+{
+  
+  vector<double> next_x_vals = msg["next_x"];
+  vector<double> next_y_vals = msg["next_y"];
+  
+  double Sum_d = 0.0;
+  vector<double> Frenet;
+  int min_no_of_points = next_x_vals.size() / 2;
+  
+  for(int k =0; k < min_no_of_points ; k++)
+  {
+    Frenet = getFrenet(next_x_vals[k], next_y_vals[k], ref_yaw, map_waypoints_x, map_waypoints_y);
+    Sum_d += Frenet[1];    
+  }
+  
+  double aveg_d = Sum_d / min_no_of_points;
+  return fabs(aveg_d - (2+4*lane));      
+}
+
+json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double car_y, double car_s,double car_yaw, vector<double> previous_path_x, vector<double> previous_path_y,vector<double>  map_waypoints_s,vector<double> map_waypoints_x,vector<double> map_waypoints_y )
+{
+  vector<double> ptsxOld;
+  vector<double> ptsyOld;
+  
+  double ref_x = car_x;
+  double ref_y = car_y;
+  double ref_yaw = deg2rad(car_yaw);
+  double prev_path_Size = previous_path_x.size();
+
+  if(prev_path_Size < 2)
+  {            
+    double preve_car_x  = car_x - cos(car_yaw);
+    double preve_car_y  = car_y - sin(car_yaw);
+
+    ptsxOld.push_back(preve_car_x);
+    ptsxOld.push_back(car_x);            
+    ptsyOld.push_back(preve_car_y);
+    ptsyOld.push_back(car_y); 
+  }
+
+  else
+  {           
+    ref_x = previous_path_x[prev_path_Size - 1];
+    ref_y = previous_path_y[prev_path_Size - 1];
+
+    double ref_prev_x = previous_path_x[prev_path_Size - 2];
+    double ref_prev_y = previous_path_y[prev_path_Size - 2];
+
+    ref_yaw = atan2( ref_y - ref_prev_y,ref_x - ref_prev_x);
+
+    ptsxOld.push_back(ref_prev_x);
+    ptsxOld.push_back(ref_x);
+
+    ptsyOld.push_back(ref_prev_y);
+    ptsyOld.push_back(ref_y);
+
+  }
+
+  vector<double> LaneChoices = {(2.2+4*lane) ,(double) (2+4*lane), (1.9+4*lane)};
+  vector<double> Cost_LaneChoices(LaneChoices.size());
+  vector<json> msgJson(LaneChoices.size());
+  
+  for(int i = 0 ; i < LaneChoices.size(); i++)
+  {    
+    
+    vector<double> ptsx;
+  	vector<double> ptsy;
+    
+    for(int j = 0; j < ptsxOld.size(); j++)
+    {
+      ptsx.push_back(ptsxOld[j]);
+      ptsy.push_back(ptsyOld[j]);
+    }
+    
+    vector<double> next_wp0 = getXY(car_s + 30 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
+    vector<double> next_wp1 = getXY(car_s + 60 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
+    vector<double> next_wp2 = getXY(car_s + 90 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
+
+    ptsx.push_back(next_wp0[0]);
+    ptsx.push_back(next_wp1[0]);
+    ptsx.push_back(next_wp2[0]);
+
+    ptsy.push_back(next_wp0[1]);
+    ptsy.push_back(next_wp1[1]);
+    ptsy.push_back(next_wp2[1]);
+
+
+    for(int m = 0; m < ptsx.size(); m++)
+    {
+
+      double shift_x = ptsx[m] - ref_x;
+      double shift_y = ptsy[m] - ref_y;
+
+      ptsx[m] = (shift_x * cos(0-ref_yaw)) - (shift_y * sin(0-ref_yaw));
+      ptsy[m] = (shift_x * sin(0-ref_yaw)) + (shift_y * cos(0-ref_yaw));
+
+    }
+
+    msgJson[i] = GetAllWayPointsMsg(ptsx, ptsy, previous_path_x, previous_path_y, refVelocity, ref_x, ref_y, ref_yaw);
+    Cost_LaneChoices[i] = GetLaneCost(msgJson[i], LaneChoices[i],ref_yaw, map_waypoints_x, map_waypoints_y);
+  }
+
+  vector<double>::iterator best_cost = std::min_element(begin(Cost_LaneChoices), end(Cost_LaneChoices));
+  int smallestCostIndex = distance(begin(Cost_LaneChoices), best_cost);
+  
+  
+  return msgJson[smallestCostIndex];
+
+}
 
 // Get all possible lane transitions from current state.
 vector<string> GetAllPossibleStates(int lane)
@@ -179,7 +292,7 @@ double KeepLane_ChangeVelocity(AllRoadVehicleDetails VehicleDetails,double refVe
   
   tk::spline collsion_s;
   vector<double> diff_s{0.0,5.0,10.0,15.0,20.0,25.0};
-  vector<double> factor{1.6,1.5,1.4,1.3,1.2,1.1};
+  vector<double> factor{1.8,1.7,1.5,1.3,1.2,1.1};
 
   
   collsion_s.set_points(diff_s,factor);
@@ -351,71 +464,7 @@ int main() {
           lane = newParam.lane;
           refVelocity = newParam.vel;
            
-          
-          vector<double> ptsx;
-          vector<double> ptsy;
-          
-          double ref_x = car_x;
-          double ref_y = car_y;
-          double ref_yaw = deg2rad(car_yaw);
-          
-          if(prev_path_Size < 2){
-            
-            double preve_car_x  = car_x - cos(car_yaw);
-            double preve_car_y  = car_y - sin(car_yaw);
-            
-            ptsx.push_back(preve_car_x);
-            ptsx.push_back(car_x);
-            
-            ptsy.push_back(preve_car_y);
-            ptsy.push_back(car_y);
-            
-          }
-          
-          else
-          {           
-            ref_x = previous_path_x[prev_path_Size - 1];
-            ref_y = previous_path_y[prev_path_Size - 1];
-            
-            double ref_prev_x = previous_path_x[prev_path_Size - 2];
-            double ref_prev_y = previous_path_y[prev_path_Size - 2];
-            
-            ref_yaw = atan2( ref_y - ref_prev_y,ref_x - ref_prev_x);
-            
-            ptsx.push_back(ref_prev_x);
-            ptsx.push_back(ref_x);
-            
-            ptsy.push_back(ref_prev_y);
-            ptsy.push_back(ref_y);
-            
-          }
-          
-          
-          vector<double> next_wp0 = getXY(car_s + 30 ,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y); 
-          vector<double> next_wp1 = getXY(car_s + 60 ,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y); 
-          vector<double> next_wp2 = getXY(car_s + 90 ,(2+4*lane),map_waypoints_s,map_waypoints_x,map_waypoints_y); 
-          
-          ptsx.push_back(next_wp0[0]);
-          ptsx.push_back(next_wp1[0]);
-          ptsx.push_back(next_wp2[0]);
-          
-          ptsy.push_back(next_wp0[1]);
-          ptsy.push_back(next_wp1[1]);
-          ptsy.push_back(next_wp2[1]);
-            
-		
-          for(int i = 0; i < ptsx.size(); i++){
-            
-            double shift_x = ptsx[i] - ref_x;
-            double shift_y = ptsy[i] - ref_y;
-            
-            ptsx[i] = (shift_x * cos(0-ref_yaw)) - (shift_y * sin(0-ref_yaw));
-            ptsy[i] = (shift_x * sin(0-ref_yaw)) + (shift_y * cos(0-ref_yaw));
-            
-          }
-          
-		  msgJson = GetAllWayPointsMsg(ptsx, ptsy, previous_path_x, previous_path_y, refVelocity, ref_x, ref_y, ref_yaw);
-
+          msgJson = GenerateTrajectoryMessage(lane, refVelocity,car_x, car_y, car_s,car_yaw, previous_path_x, previous_path_y,map_waypoints_s,map_waypoints_x,map_waypoints_y );
 
           auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
