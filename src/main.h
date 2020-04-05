@@ -5,6 +5,10 @@
 #include <vector>
 
 
+#define MAX_COST (double) 999.0
+#define MOVE_LEFT (string) "MoveLeft"
+#define MOVE_RIGHT (string) "MoveRight"
+
 struct AllRoadVehicleDetails{
   bool Vehicle_Ahead		= false;
   bool Vehicle_Behind		= false;
@@ -12,8 +16,15 @@ struct AllRoadVehicleDetails{
   bool Vehicle_Left_Behind	= false;
   bool Vehicle_Right		= false;
   bool Vehicle_Right_Behind = false;
-  double Near_Veh_Left 		= 0.0;
-  double Near_Veh_Right     = 0.0;
+  
+  double Near_Veh_Left 		= 6945.554;
+  double Near_Veh_Right     = 6945.554;
+  
+  double VehAhead_s_diff    = 6945.554;
+  double VehBehind_s_diff   = 6945.554;
+  
+  double VehAhead_Vel       = 0.0;
+  
 };
 
 struct Vehicle{

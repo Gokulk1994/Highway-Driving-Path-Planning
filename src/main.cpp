@@ -78,17 +78,20 @@ vector<string> GetAllPossibleStates(int lane)
   
   if(lane == 0)
   {
-    states.push_back("MoveRight");
+    states.push_back(MOVE_RIGHT);    
   }
   else if(lane == 1)
   {
-   	states.push_back("MoveRight");
-    states.push_back("MoveLeft");
+   	states.push_back(MOVE_RIGHT);
+    states.push_back(MOVE_LEFT);
   }
   else if(lane == 2)
-    states.push_back("MoveLeft");
+    states.push_back(MOVE_LEFT);
   else
+  {
+	std::cout<<"Invalid Lane Detected "<<lane<<std::endl;
     states.push_back("InvalidLane");
+  }
   
   return states;
 }
@@ -108,7 +111,18 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
     {
       if((check_car_s > car_s) && ((check_car_s - car_s) < 30))
       {
-        VehicleDetails.Vehicle_Ahead = true;     
+        VehicleDetails.Vehicle_Ahead   = true; 
+        VehicleDetails.VehAhead_s_diff = check_car_s - car_s;
+        VehicleDetails.VehAhead_Vel    = VehicleData[i].vel;
+      }
+      else if((check_car_s < car_s) && ((car_s - check_car_s) < 30))
+      {
+        VehicleDetails.Vehicle_Behind    = true;    
+        VehicleDetails.VehBehind_s_diff = car_s - check_car_s ;
+      }
+      else
+      {
+        // car in same lane at safe distance do nothing
       }
     }
     else if((check_car_lane == lane + 1) && (lane + 1 < 3))
@@ -117,7 +131,7 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
       {
         VehicleDetails.Vehicle_Right = true;
       }
-      if(VehicleDetails.Near_Veh_Right > check_car_s)
+      if(check_car_s < VehicleDetails.Near_Veh_Right)
       {
         VehicleDetails.Near_Veh_Right = check_car_s;
       }
@@ -128,30 +142,95 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
       {
         VehicleDetails.Vehicle_Left = true;
       }
-      if(VehicleDetails.Near_Veh_Left > check_car_s)
+      if(check_car_s < VehicleDetails.Near_Veh_Left )
       {
         VehicleDetails.Near_Veh_Left = check_car_s;
       }
     }
   }
-
   return VehicleDetails;
+}
+
+double GetCost(string state,AllRoadVehicleDetails VehicleDetails,int lane,double refVelocity)
+{
+  double cost = MAX_COST;
+  if (state.compare(MOVE_LEFT) == 0)
+  {
+    if(!VehicleDetails.Vehicle_Left && lane != 0)
+    {
+      cost = 1.0 - sigmoid(VehicleDetails.Near_Veh_Left);
+    }
+  }
+  else if(state.compare(MOVE_RIGHT) == 0)
+  {
+    if(!VehicleDetails.Vehicle_Right && lane != 2)
+    {
+      cost = 1.0 - sigmoid(VehicleDetails.Near_Veh_Right);
+    }
+  }
+  
+  return cost;
+}
+
+double KeepLane_ChangeVelocity(AllRoadVehicleDetails VehicleDetails,double refVelocity)
+{
+  double Newfactor = 1.0;
+  double NewVelocity = 0.0;
+  
+  tk::spline collsion_s;
+  vector<double> diff_s{0.0,5.0,10.0,15.0,20.0,25.0};
+  vector<double> factor{1.6,1.5,1.4,1.3,1.2,1.1};
+
+  
+  collsion_s.set_points(diff_s,factor);
+  
+  Newfactor   = collsion_s(VehicleDetails.VehAhead_s_diff);
+  
+  if(Newfactor > 1.8)
+    Newfactor = 1.8;
+  
+  NewVelocity = refVelocity - (Newfactor * 0.224);   
+  
+  return NewVelocity;
+  
 }
 
 Vehicle CheckTransition(double car_s,int lane,double refVelocity,vector<Vehicle> &VehicleData)
 {
   
   AllRoadVehicleDetails VehicleDetails = Check_Neigbour_VehicleDetails(car_s,lane,VehicleData);
-  vector<string> states =  GetAllPossibleStates(lane);
   
-  if(VehicleDetails.Vehicle_Ahead){            
-
-    if(!VehicleDetails.Vehicle_Left && lane != 0)
-      lane = lane-1;
-    else if (!VehicleDetails.Vehicle_Right && lane != 2)
-      lane = lane+1;
+  
+  if(VehicleDetails.Vehicle_Ahead){    
+    
+    vector<string> states =  GetAllPossibleStates(lane);
+    vector<double> costs(states.size());
+	
+    for(int i = 0; i < states.size() ; i++)
+    {      
+      costs[i] = GetCost(states[i],VehicleDetails,lane,refVelocity);
+    }
+    
+    vector<double>::iterator best_cost = std::min_element(begin(costs), end(costs));
+    int smallestCostIndex = distance(begin(costs), best_cost);
+    
+    if(costs[smallestCostIndex] != MAX_COST)
+    {
+      if(states[smallestCostIndex].compare(MOVE_LEFT) == 0)        // Lane Change Left
+        lane = lane-1;
+      else if(states[smallestCostIndex].compare(MOVE_RIGHT) == 0)  // Lane Change Right
+      	lane = lane+1;
+      else
+        std::cout<<"Invalid State detected "<<states[smallestCostIndex]<<" "<<smallestCostIndex<<" "<<costs.size()<<std::endl;
+    }
     else
-      refVelocity -= 0.224;                         
+    {
+      if((VehicleDetails.VehAhead_s_diff > 25.0) && 
+         (VehicleDetails.VehBehind_s_diff > 25.0))       // Constant Deceleration : Good Distance Between front and rear vehicles. Decrease Constatly;  
+      	refVelocity -= 0.224;
+      else
+      	refVelocity = KeepLane_ChangeVelocity(VehicleDetails, refVelocity); // Keep Lane with Dynamic Deceleration :  Maintain propper distance                    
+    }
   }
   else if(refVelocity < 49.5){
     refVelocity += 0.224;           
