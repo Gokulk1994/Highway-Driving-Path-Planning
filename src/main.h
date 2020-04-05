@@ -5,9 +5,13 @@
 #include <vector>
 
 
-#define MAX_COST (double) 999.0
-#define MOVE_LEFT (string) "MoveLeft"
-#define MOVE_RIGHT (string) "MoveRight"
+#define MAX_COST (double) 999.0         // default cost value set to maximum
+#define MOVE_LEFT (string) "MoveLeft"   // Move left state variable
+#define MOVE_RIGHT (string) "MoveRight" // move right state variable
+
+/*
+All information related to the neighbouring vehicles obtained from the map and sensor fusion
+*/
 
 struct AllRoadVehicleDetails{
   bool Vehicle_Ahead		= false;
@@ -27,6 +31,9 @@ struct AllRoadVehicleDetails{
   
 };
 
+/*
+Placeholder to hold all necessary vehicle data
+*/
 struct Vehicle{
   double s 		= 0.0;
   double d 	    = 0.0;
@@ -34,18 +41,11 @@ struct Vehicle{
   int lane	    = 0;
 };
 
-struct SDVehicle{
-  double s 		= 0.0;
-  double d 	    = 0.0;
-  double vel 	= 0.0;
-  double ref_x  = 0.0;
-  double ref_y  = 0.0;
-  double yaw    = 0.0;
-  int lane	    = 0;
-  
-  vector<double> previous_path_x;
-  vector<double> previous_path_y;
-  
-};
-
+/*
+Sigmoid function, converts range between 0 to 1
+*/
+double sigmoid(double x)
+{
+  return (1.0 / (1 + exp(-x)));
+}
 #endif

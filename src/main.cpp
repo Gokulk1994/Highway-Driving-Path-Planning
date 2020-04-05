@@ -17,19 +17,19 @@ using std::string;
 using std::vector;
 using std::map;
 
+/*
+Generate way points between current position and horizon (30m ) using the spline library
+return : Json message with way points
+*/
 
-
-json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> previous_path_x,vector<double> previous_path_y, double refVelocity ,
+json GetAllWayPointsMsg(tk::spline s,vector<double> previous_path_x,vector<double> previous_path_y, double refVelocity ,
                        double ref_x, double ref_y, double ref_yaw)
-{
-  tk::spline s;                 
+{             
   vector<double> next_x_vals;
   vector<double> next_y_vals;  
   json msgJson;
   
-  s.set_points(ptsx,ptsy);  
-  
-
+  // Add previous points to the way points to generate a smooth movemeent
   for(int i=0; i<previous_path_x.size(); i++)
   {
     next_x_vals.push_back(previous_path_x[i]);
@@ -37,13 +37,14 @@ json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> 
   }
     
 
-  
+  // Spline based y value generation based on current x position
   double target_x = 30.0;
   double target_y = s(target_x);
   double dist     = sqrt((target_x*target_x) + (target_y*target_y));
 
   double x_add_on = 0;
 
+  // Generate Remaining way points 
   for(int i = 1; i < 50 - previous_path_x.size() ; i++)
   {
 
@@ -55,7 +56,8 @@ json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> 
 
     double x_ref = x_point;
     double y_ref = y_point;
-
+	
+    // Rotate and Translate all points to vehicle coordinate systems
     x_point = x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw);
     y_point = x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw);
 
@@ -72,6 +74,14 @@ json GetAllWayPointsMsg(vector<double> ptsx, vector<double> ptsy,vector<double> 
   return msgJson;
 }
 
+/*
+Find the lane cost based on the deviation between actual "d" value and the calcualted "d" values 
+1. Convert x and y from way points to s and d
+2. Get the average "d" values of all way points 
+3. calculate the cost based on the deviation between average d value and expected d value (lane)
+Note:  Lane cost is not normalized to 1, as it is a single cost and direct comparison with other choices
+return : cost of lane (delta)
+*/
 
 double GetLaneCost(json msg, double lane,double ref_yaw, vector<double> map_waypoints_x,vector<double> map_waypoints_y)
 {
@@ -81,18 +91,29 @@ double GetLaneCost(json msg, double lane,double ref_yaw, vector<double> map_wayp
   
   double Sum_d = 0.0;
   vector<double> Frenet;
-  int min_no_of_points = next_x_vals.size() / 2;
+  int min_no_of_points = next_x_vals.size();
+  
   
   for(int k =0; k < min_no_of_points ; k++)
   {
+    // Get Frenet coordinates from Cartesian coordinates
     Frenet = getFrenet(next_x_vals[k], next_y_vals[k], ref_yaw, map_waypoints_x, map_waypoints_y);
     Sum_d += Frenet[1];    
   }
   
+  // average "d" values
   double aveg_d = Sum_d / min_no_of_points;
+  
+  // return tha absolute deviation as cost
   return fabs(aveg_d - (2+4*lane));      
 }
 
+/*
+Generate optimal trajectory based on lane cost.
+Generate 3 trajectories with +- 0.2 to lane values
+Choose the optimal trajectory based on deviation between the expected and actual lane position in frenet coordinates
+return : Json message with optimal way points
+*/
 json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double car_y, double car_s,double car_yaw, vector<double> previous_path_x, vector<double> previous_path_y,vector<double>  map_waypoints_s,vector<double> map_waypoints_x,vector<double> map_waypoints_y )
 {
   vector<double> ptsxOld;
@@ -103,6 +124,8 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
   double ref_yaw = deg2rad(car_yaw);
   double prev_path_Size = previous_path_x.size();
 
+  // If no previous points is available, add the car's current position 
+  // and earlier position obtained at tangential direction as previous positions
   if(prev_path_Size < 2)
   {            
     double preve_car_x  = car_x - cos(car_yaw);
@@ -113,8 +136,7 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
     ptsyOld.push_back(preve_car_y);
     ptsyOld.push_back(car_y); 
   }
-
-  else
+  else    // add previous position 
   {           
     ref_x = previous_path_x[prev_path_Size - 1];
     ref_y = previous_path_y[prev_path_Size - 1];
@@ -132,7 +154,7 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
 
   }
 
-  vector<double> LaneChoices = {(2.2+4*lane) ,(double) (2+4*lane), (1.9+4*lane)};
+  vector<double> LaneChoices = {(2.2+4*lane) ,(double) (2+4*lane), (1.8+4*lane)}; // different lane choices
   vector<double> Cost_LaneChoices(LaneChoices.size());
   vector<json> msgJson(LaneChoices.size());
   
@@ -142,12 +164,14 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
     vector<double> ptsx;
   	vector<double> ptsy;
     
+    // Add past points as anchor points to the spline library
     for(int j = 0; j < ptsxOld.size(); j++)
     {
       ptsx.push_back(ptsxOld[j]);
       ptsy.push_back(ptsyOld[j]);
     }
     
+    // Other anchor positions for spline library
     vector<double> next_wp0 = getXY(car_s + 30 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
     vector<double> next_wp1 = getXY(car_s + 60 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
     vector<double> next_wp2 = getXY(car_s + 90 ,LaneChoices[i],map_waypoints_s,map_waypoints_x,map_waypoints_y); 
@@ -160,7 +184,8 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
     ptsy.push_back(next_wp1[1]);
     ptsy.push_back(next_wp2[1]);
 
-
+	
+    // shift the points to the axis of the car
     for(int m = 0; m < ptsx.size(); m++)
     {
 
@@ -171,34 +196,46 @@ json GenerateTrajectoryMessage(int lane,double refVelocity, double car_x, double
       ptsy[m] = (shift_x * sin(0-ref_yaw)) + (shift_y * cos(0-ref_yaw));
 
     }
+    
+    tk::spline s;
+    
+    // Generate graph using spline library with x and y anchor points
+  	s.set_points(ptsx,ptsy);  
 
-    msgJson[i] = GetAllWayPointsMsg(ptsx, ptsy, previous_path_x, previous_path_y, refVelocity, ref_x, ref_y, ref_yaw);
+    // Get the way points for the given x an y values which is genertaed for a particular lane choice
+    msgJson[i] = GetAllWayPointsMsg(s, previous_path_x, previous_path_y, refVelocity, ref_x, ref_y, ref_yaw);
+    
+    // Get cost for the generated way points with lane choice
     Cost_LaneChoices[i] = GetLaneCost(msgJson[i], LaneChoices[i],ref_yaw, map_waypoints_x, map_waypoints_y);
   }
-
+  
+  // Choose trajectory with low deviation(cost)
   vector<double>::iterator best_cost = std::min_element(begin(Cost_LaneChoices), end(Cost_LaneChoices));
   int smallestCostIndex = distance(begin(Cost_LaneChoices), best_cost);
   
   
   return msgJson[smallestCostIndex];
-
 }
 
-// Get all possible lane transitions from current state.
+/*
+Get all possible lane transitions from current state.
+return : Possible lane state
+*/
+
 vector<string> GetAllPossibleStates(int lane)
 {
   vector<string> states;
   
-  if(lane == 0)
+  if(lane == 0) // Left lane
   {
     states.push_back(MOVE_RIGHT);    
   }
-  else if(lane == 1)
+  else if(lane == 1) // center lane
   {
    	states.push_back(MOVE_RIGHT);
     states.push_back(MOVE_LEFT);
   }
-  else if(lane == 2)
+  else if(lane == 2) // right lane
     states.push_back(MOVE_LEFT);
   else
   {
@@ -209,7 +246,10 @@ vector<string> GetAllPossibleStates(int lane)
   return states;
 }
 
-
+/*
+Update information of the neighbouring vehicles in the map based on the information from the sensor fusion
+return : struture with all details listed in AllRoadVehicleDetails
+*/
 AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector<Vehicle> &VehicleData)
 {
   AllRoadVehicleDetails VehicleDetails;
@@ -220,15 +260,15 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
     double check_car_s    = VehicleData[i].s;
     double check_car_lane = VehicleData[i].lane;
     
-    if(check_car_lane == lane)
+    if(check_car_lane == lane)    // Vechile present in the lane same as the ego vehicle 
     {
-      if((check_car_s > car_s) && ((check_car_s - car_s) < 30))
+      if((check_car_s > car_s) && ((check_car_s - car_s) < 30))  // vehicle travelling ahead and at a distance less than 30m
       {
         VehicleDetails.Vehicle_Ahead   = true; 
         VehicleDetails.VehAhead_s_diff = check_car_s - car_s;
         VehicleDetails.VehAhead_Vel    = VehicleData[i].vel;
       }
-      else if((check_car_s < car_s) && ((car_s - check_car_s) < 30))
+      else if((check_car_s < car_s) && ((car_s - check_car_s) < 30))  // vehicle travelling behind at a distance  less than 30m
       {
         VehicleDetails.Vehicle_Behind    = true;    
         VehicleDetails.VehBehind_s_diff = car_s - check_car_s ;
@@ -238,23 +278,29 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
         // car in same lane at safe distance do nothing
       }
     }
-    else if((check_car_lane == lane + 1) && (lane + 1 < 3))
+    else if((check_car_lane == lane + 1) && (lane + 1 < 3))  // vehicle present in right lane to the ego vehicle's lane
     {
-      if(abs(check_car_s - car_s) < 40)
+      // Vehicle ahead in right lane at a distance less than 40m 
+      // ( not checked against 30m, as consecutive lane change might occur if right lane vehicle is at 31m, causes sudden change in acceleration)
+      if(abs(check_car_s - car_s) < 40)  
       {
         VehicleDetails.Vehicle_Right = true;
       }
-      if(check_car_s < VehicleDetails.Near_Veh_Right)
+      // get the closest vehicle in the right lane to the ego vehicle based on s coordinate of freenet.
+      // USeful in Traffic based cost function
+      if(check_car_s < VehicleDetails.Near_Veh_Right) 
       {
         VehicleDetails.Near_Veh_Right = check_car_s;
       }
     }
-    else if ((check_car_lane == lane - 1) && (lane - 1 > -1))
+    else if ((check_car_lane == lane - 1) && (lane - 1 > -1)) // vehicle present to the left og ego vehicle
     {
+      // Vehicle ahead in left lane at a distance less than 40m
       if(abs(check_car_s - car_s) < 40)
       {
         VehicleDetails.Vehicle_Left = true;
       }
+      // closest vehicle distance in left lane
       if(check_car_s < VehicleDetails.Near_Veh_Left )
       {
         VehicleDetails.Near_Veh_Left = check_car_s;
@@ -264,19 +310,30 @@ AllRoadVehicleDetails Check_Neigbour_VehicleDetails(double car_s,int lane,vector
   return VehicleDetails;
 }
 
+/*
+Calculate the cost of parameters based on the distance to the nearest vehicle in each lane
+1. if 2 lanes are available during changing lanes (ex. when travelling in middle lane)
+2. Choose the lane in which the ongoing vehicle is far away from ego vehicle. (less traffic )
+3. This helps in reducing successive lane changes
+4. High cost if vehicle is too close, low cost if vehicle is far away. 
+5. Cost is normalized to 1.0
+6. calculate cost only if lane change in that lane is possible; no vehicles within +-40m from ego vehicle
+7. Maximum cost if lane change not possible
+return : cost based on nearest vehicle distance
+*/
 double GetCost(string state,AllRoadVehicleDetails VehicleDetails,int lane,double refVelocity)
 {
-  double cost = MAX_COST;
+  double cost = MAX_COST; // 999.0;
   if (state.compare(MOVE_LEFT) == 0)
   {
-    if(!VehicleDetails.Vehicle_Left && lane != 0)
+    if(!VehicleDetails.Vehicle_Left && lane != 0)  // calculate cost only if lane change in left direction is allowed
     {
-      cost = 1.0 - sigmoid(VehicleDetails.Near_Veh_Left);
+      cost = 1.0 - sigmoid(VehicleDetails.Near_Veh_Left); // sigmoid function converts distance between vehicles in range 0 to 1.
     }
   }
   else if(state.compare(MOVE_RIGHT) == 0)
   {
-    if(!VehicleDetails.Vehicle_Right && lane != 2)
+    if(!VehicleDetails.Vehicle_Right && lane != 2) // calculate cost only if lane change in right direction is allowed
     {
       cost = 1.0 - sigmoid(VehicleDetails.Near_Veh_Right);
     }
@@ -285,45 +342,68 @@ double GetCost(string state,AllRoadVehicleDetails VehicleDetails,int lane,double
   return cost;
 }
 
+/*
+calculate the velocity of ego vehicle in  Keep Lane state
+1. deceleration is based on the distance between the vehicle going ahead of ego vehicle in same direction
+2. Construct a graph between distance to collide and factor of change in velocity (deceleration)
+3. Interpolate at get the values of rate of change in velocity factor based from the graph.
+4. Steps 2 and 3 is executed using spline library
+return : Updated Reference velocity
+*/
 double KeepLane_ChangeVelocity(AllRoadVehicleDetails VehicleDetails,double refVelocity)
 {
   double Newfactor = 1.0;
   double NewVelocity = 0.0;
   
   tk::spline collsion_s;
-  vector<double> diff_s{0.0,5.0,10.0,15.0,20.0,25.0};
-  vector<double> factor{1.8,1.7,1.5,1.3,1.2,1.1};
+  vector<double> diff_s{0.0,5.0,10.0,15.0,20.0,25.0};  // various distance to collision values
+  vector<double> factor{1.8,1.7,1.5,1.3,1.2,1.1}; // corresponding factor values
 
   
-  collsion_s.set_points(diff_s,factor);
+  collsion_s.set_points(diff_s,factor);  // construct a graph based on the points
   
-  Newfactor   = collsion_s(VehicleDetails.VehAhead_s_diff);
+  Newfactor   = collsion_s(VehicleDetails.VehAhead_s_diff); // interpolate and get values
   
-  if(Newfactor > 1.8)
+  if(Newfactor > 1.8) // if factor exceeds maximum, update to maximum
     Newfactor = 1.8;
   
-  NewVelocity = refVelocity - (Newfactor * 0.224);   
+  NewVelocity = refVelocity - (Newfactor * 0.224); // new deceleration value based on the factor and old values
   
   return NewVelocity;
   
 }
 
+/*
+Handles various state transition of ego vehicle
+Get optimal Lane (d value) and Velocity of ego vehicle from all the available details 
+1. if there is a vehicle ahead at a distance within 30 m, try lane change or reduce velocity to prevent collision.
+2. Choose lane to which ego vehicle has to move, based on the cost function based on traffic.
+3. If unable to change lane due to vehicle ahead and behind the other lanes, 
+	a. try to reduce speed constantly if distance to collide is greater than 25m
+	b. reduce speed based on the distance to collide dynamically using spline library
+4. If no vehicle ahead maintain target speed
+return : optimal velocity and lane to be travelled
+*/
+
 Vehicle CheckTransition(double car_s,int lane,double refVelocity,vector<Vehicle> &VehicleData)
 {
-  
+  // Get necessary information about all neighbouring vehicles from the map
   AllRoadVehicleDetails VehicleDetails = Check_Neigbour_VehicleDetails(car_s,lane,VehicleData);
   
-  
+  // vehcile moving ahead, possible chance of collision, reduce velocity
   if(VehicleDetails.Vehicle_Ahead){    
     
+	// Obtain all the possible state transitions from curret lane
     vector<string> states =  GetAllPossibleStates(lane);
     vector<double> costs(states.size());
 	
+	// calculate the cost of each state
     for(int i = 0; i < states.size() ; i++)
     {      
       costs[i] = GetCost(states[i],VehicleDetails,lane,refVelocity);
     }
     
+	// choose optimal state based on cost.
     vector<double>::iterator best_cost = std::min_element(begin(costs), end(costs));
     int smallestCostIndex = distance(begin(costs), best_cost);
     
@@ -338,19 +418,20 @@ Vehicle CheckTransition(double car_s,int lane,double refVelocity,vector<Vehicle>
     }
     else
     {
-      if((VehicleDetails.VehAhead_s_diff > 25.0) && 
-         (VehicleDetails.VehBehind_s_diff > 25.0))       // Constant Deceleration : Good Distance Between front and rear vehicles. Decrease Constatly;  
+      if(VehicleDetails.VehAhead_s_diff > 25.0)       // Constant Deceleration : Good Distance Between front and rear vehicles. Decrease Constatly;  
       	refVelocity -= 0.224;
       else
-      	refVelocity = KeepLane_ChangeVelocity(VehicleDetails, refVelocity); // Keep Lane with Dynamic Deceleration :  Maintain propper distance                    
+      	refVelocity = KeepLane_ChangeVelocity(VehicleDetails, refVelocity); // Keep Lane with Dynamic Deceleration :  Maintain proper distance                    
     }
   }
-  else if(refVelocity < 49.5){
+  else if(refVelocity < 49.5) // no chance of collision, maintain target speed
+  { 
     refVelocity += 0.224;           
   } 
   
   Vehicle VehNewUpdate;
   
+  // get optimal parameters
   VehNewUpdate.lane = lane;
   VehNewUpdate.vel  = refVelocity;
   
@@ -395,6 +476,7 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
+  //  lane and velocity of ego vehcile which will be modified depending on various conditions
   int lane = 1;
   double refVelocity = 0.0;
   
@@ -439,7 +521,8 @@ int main() {
           json msgJson;          
 
           int prev_path_Size = previous_path_x.size();
-		            
+		  
+		  // Store all necesssary info from sensor fusion data
           for(int i =0; i< sensor_fusion.size(); i++)
           {
     		double vx  = sensor_fusion[i][3];
@@ -447,23 +530,26 @@ int main() {
             
             Vehicle Veh;
                       
-            Veh.vel    = sqrt(vx*vx + vy*vy);
+            Veh.vel    = sqrt(vx*vx + vy*vy); // resultant velocity of the car
             Veh.s      = sensor_fusion[i][5];
-            Veh.s 	  += ((double)prev_path_Size*0.02*Veh.vel);
+            Veh.s 	  += ((double)prev_path_Size*0.02*Veh.vel); // future position of the car
             Veh.d      = sensor_fusion[i][6];
-            Veh.lane   = floor(Veh.d / 4);
+            Veh.lane   = floor(Veh.d / 4);  // lane in which the vehicle is travelling
             
             VehicleData.push_back(Veh);
           }
-                                
+          
+		  //update last end position as ego car's current position 
           if (prev_path_Size > 0) {
             car_s = end_path_s;
           }
           
+		  // check state transition and update optimal parameters
           Vehicle newParam = CheckTransition(car_s,lane,refVelocity,VehicleData);          
           lane = newParam.lane;
           refVelocity = newParam.vel;
            
+		  // Get the optimal trajectory from the provided lane and refVelocity
           msgJson = GenerateTrajectoryMessage(lane, refVelocity,car_x, car_y, car_s,car_yaw, previous_path_x, previous_path_y,map_waypoints_s,map_waypoints_x,map_waypoints_y );
 
           auto msg = "42[\"control\","+ msgJson.dump()+"]";
